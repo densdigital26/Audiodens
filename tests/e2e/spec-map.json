@@ -1,25 +1,41 @@
 {
   "_readme": [
     "Which Playwright specs a pull request to a branch other than main runs. Read by scripts/ci/select-e2e.mjs.",
-    "A pull request to main, and every push, runs the whole suite and ignores this file.",
+    "A pull request to main, a push to main or big-release, a release, the nightly run and a manual run of e2e-full.yml run the whole suite and ignore this file.",
     "Otherwise the run is: the spec files the PR adds or changes, plus 'smoke', plus the specs of every rule whose paths match a changed file.",
-    "A changed file matching 'full' runs the whole suite. So does a changed file under static/, app/ or tests/e2e/ that matches no rule here.",
+    "A changed file matching 'hubs', or one under static/ or app/ that matches no rule, also adds 'core'. It no longer runs the whole suite: the full run on the next push to big-release catches what core misses.",
+    "A changed file matching 'full' runs the whole suite: these change how the suite itself runs. So does a changed non-spec file under tests/e2e/ that matches no rule.",
+    "uv.lock and pyproject.toml are hubs, not full: a dependency change can move backend behaviour the core set exercises, but it does not change how Playwright runs, and the desktop-update-gate check covers the lock separately.",
+    "Why the core set is these specs: each drives a hub through the real UI. help-mode reaches every control and its i18n.js sentence; artist-languages switches the UI language; partial-stems and export-menu read stems through state.js, mixer.js and app/api/stems.py; karaoke crosses mode.js, mixer.js, transport.js, sections.js and /api/jobs; master-live builds the master bus; transpose and slow-speed drive the audio engine's pitch and speed; footer-time checks transport.js against the engine clock; zoom redraws the multitrack vendor lanes; lane-alignment and track-header lay out the mixer rows over base.css and --lane-h; playback-memory runs chunkedAudioEngine.js; trash-restore moves library rows through catalog.js and app/api/jobs.py; job-form-submit and error-banner cover job.js and the composer form; boot-failure covers main.js wiring and boot-diagnostics.",
     "Specs are named without tests/e2e/ and .spec.mjs. Paths are globs: * stays inside one folder, ** crosses folders.",
     "The rules were built from what the specs touch: modules they import with page.evaluate, element ids and classes the module renders, and the API routes they hit or stub."
   ],
 
   "smoke": ["modes", "library-rows", "queue-progress", "mode-stems", "settings-nav"],
 
+  "core": [
+    "help-mode", "artist-languages", "partial-stems", "export-menu", "karaoke", "master-live", "transpose", "slow-speed",
+    "footer-time", "zoom", "lane-alignment", "track-header", "playback-memory", "trash-restore", "job-form-submit",
+    "error-banner", "boot-failure"
+  ],
+
   "full": [
     "playwright.config.mjs",
     "package.json",
     "package-lock.json",
     ".github/workflows/ci.yml",
+    ".github/workflows/e2e.yml",
+    ".github/workflows/e2e-full.yml",
     "scripts/ci/select-e2e.mjs",
     "tests/e2e/spec-map.json",
     "tests/e2e/helpers*",
     "tests/e2e/serve.sh",
-    "tests/e2e/seed.py",
+    "tests/e2e/seed.py"
+  ],
+
+  "hubs": [
+    "uv.lock",
+    "pyproject.toml",
 
     "static/index.html",
     "static/css/base.css",
