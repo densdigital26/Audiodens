@@ -9,6 +9,7 @@ The renders run the real ffmpeg and are probed, as in test_takes_render.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 
 import httpx
 import numpy as np
@@ -18,6 +19,7 @@ from pydantic import ValidationError
 
 from app.api import stems as stems_mod
 from app.api import takes as takes_mod
+from app.core.config import ffmpeg_executable
 from app.core.registry import _jobs
 from app.pipeline.take_render import (
     CANVAS_SIZES,
@@ -335,6 +337,58 @@ async def test_click_adds_a_lane_and_is_skipped_without_a_grid(
     assert calls and calls[0][:2] == (JOB, True)
     assert with_click > 0.05
     assert no_grid < 0.005 and without < 0.005
+
+
+async def test_the_rendered_click_is_at_the_live_level_on_each_channel(
+    jobs_dir, client, tmp_path, monkeypatch
+):
+    """The click lane is mono, as rendered; each channel of the video carries
+    it at its volume, as the app plays it (#833), not 3 dB lower."""
+    _needs_x264()
+    _make_job(jobs_dir)
+    click = tmp_path / "click.wav"
+    t = np.arange(int(SR * 3.0)) / SR
+    tone = 0.3 * np.sin(2 * np.pi * 1000 * t)
+    sf.write(click, tone, SR, subtype="PCM_16")
+    monkeypatch.setattr(
+        stems_mod,
+        "_click_lane",
+        lambda j, e, m, a, gain, *r, **k: stems_mod._ClickLane(click, gain, 0.0, False),
+    )
+    async with client as c:
+        tid = await _take_with_camera(c, tmp_path)
+        body = {"canvas": "16:9", "fit": "fill", "size": "720", "span": "song"}
+        r = await c.post(
+            f"/api/jobs/{JOB}/takes/{tid}/render",
+            json={**body, "stems": ["drums"], "gains": [0.0], "click": True},
+        )
+        assert r.status_code == 202, r.text
+        assert (await _wait(c, tid))["status"] == "done"
+    out = jobs_dir / JOB / "takes" / tid / "render.mp4"
+    pcm = subprocess.run(
+        [
+            ffmpeg_executable(),
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-i",
+            str(out),
+            "-vn",
+            "-f",
+            "f32le",
+            "pipe:1",
+        ],
+        capture_output=True,
+        check=True,
+        timeout=60,
+    ).stdout
+    x = np.frombuffer(pcm, dtype="<f4").reshape(-1, 2)[int(0.5 * SR) : int(2.5 * SR)]
+    live = 0.3 / np.sqrt(2) * takes_mod.RENDER_CLICK_GAIN
+    for ch in (0, 1):
+        got = float(np.sqrt(np.mean(x[:, ch] ** 2)))
+        assert 20 * np.log10(got / live) == pytest.approx(0.0, abs=0.2), (ch, got, live)
+    audio = next(s for s in _probe(out)["streams"] if s["codec_type"] == "audio")
+    assert audio["channels"] == 2
 
 
 async def test_cancel_stops_a_streamer_render(jobs_dir, client, tmp_path):

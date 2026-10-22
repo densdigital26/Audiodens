@@ -18,10 +18,12 @@ the same checks on a real song as well; without it those tests skip.
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 import shutil
 import subprocess
+import zipfile
 from pathlib import Path
 
 import httpx
@@ -252,6 +254,62 @@ async def test_a_quiet_lossy_export_keeps_its_loudness(jobs_dir, client, tmp_pat
         wav = await _export(c, tmp_path, "wav", ["vocals", "drums", "bass"], [1, 1, 1])
         mp3 = await _export(c, tmp_path, "mp3", ["vocals", "drums", "bass"], [1, 1, 1])
     assert abs(_measure(wav)["I"] - _measure(mp3)["I"]) <= 0.1
+
+
+_CLICK_GRID = {
+    "version": 1,
+    "beats": [0.25, 0.75, 1.25, 1.75],
+    "bars": [{"beat": 0, "beats_per_bar": 4}],
+    "duration": 2.0,
+}
+
+
+@pytest.mark.parametrize("ext", ["wav", "flac", "mp3", "ogg"])
+async def test_the_loudest_click_on_loud_stems_stays_under_the_ceiling(
+    jobs_dir, client, tmp_path, ext
+):
+    """The click at its maximum volume (4), accented, on stems that already
+    sum over full scale, in the mix and alone in the stems zip: the export
+    limiter still holds. The click reaches both channels at unity (#833), 3 dB
+    hotter than before, so this is its worst case."""
+    skip_without_ffmpeg()
+    if ext == "ogg":
+        skip_without_vorbis()
+    stems = _job(jobs_dir, _loud_lanes())
+    (stems / "beats.json").write_text(json.dumps(_CLICK_GRID), encoding="utf-8")
+    click = "click=1&click_gain=4&click_accent=4"
+    async with client as c:
+        r = await c.get(
+            f"/api/jobs/{JOB}/mixdown.{ext}?stems=vocals,drums,bass&gains=1,1,1&{click}"
+        )
+        assert r.status_code == 200, r.text
+        mix = tmp_path / f"mix.{ext}"
+        mix.write_bytes(r.content)
+        r = await c.get(f"/api/jobs/{JOB}/stems/all.zip?format={ext}&{click}")
+        assert r.status_code == 200, r.text
+    alone = tmp_path / f"click.{ext}"
+    alone.write_bytes(zipfile.ZipFile(io.BytesIO(r.content)).read(f"Loud_click.{ext}"))
+    for out in (mix, alone):
+        m = _measure(out)
+        assert m["full_scale"] == 0, out.name
+        if ext in ("wav", "flac"):
+            assert m["peak_db"] <= EXPORT_LIMIT_DBFS + 0.01, (out.name, m)
+        else:
+            assert m["tp"] <= LOSSY_DECODED_MAX_DBTP, (out.name, m)
+
+
+async def test_the_default_click_alone_never_reaches_the_limiter(jobs_dir, client, tmp_path):
+    """At the default volume (0.6) the accented click alone peaks well under
+    -1 dBFS, so the lossless limiter leaves it bit-exact."""
+    skip_without_ffmpeg()
+    stems = _job(jobs_dir, {"drums": np.zeros(2 * SR)})
+    (stems / "beats.json").write_text(json.dumps(_CLICK_GRID), encoding="utf-8")
+    async with client as c:
+        r = await c.get(
+            f"/api/jobs/{JOB}/mixdown.wav?stems=drums&gains=0&click=1&click_gain=0.6&click_accent=4"
+        )
+    y, _ = sf.read(io.BytesIO(r.content))
+    assert 20 * np.log10(np.abs(y).max()) < EXPORT_LIMIT_DBFS - 3
 
 
 async def test_the_lossy_limiter_keeps_length_and_timing(jobs_dir, client, tmp_path):

@@ -55,6 +55,13 @@ ACCENT_OFF = 0
 
 _VALID_MULTIPLIERS = (0.5, 1.0, 2.0)
 
+# The rendered click is mono; every export takes it to stereo with this filter,
+# the mono click on both channels at unity (#833). That is what the app plays:
+# Web Audio up-mixes the mono click into the stereo master as L = R = M. Left
+# to amix, the mix graph would insert libswresample's default mono-to-stereo
+# matrix instead, which puts the click 3 dB lower on each channel.
+CLICK_TO_STEREO = "pan=stereo|c0=c0|c1=c0"
+
 
 def default_grouping(beats_per_bar: int) -> list[int]:
     """How a bar of `beats_per_bar` divides, when the user has not said.
