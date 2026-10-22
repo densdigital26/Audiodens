@@ -17,6 +17,9 @@
 #   --delay     pause before the second attempt, doubled before each later
 #               one (default 10)
 #
+# The command sees RETRY_ATTEMPT (1, 2, ...), so a later attempt can do
+# something different from the first, such as use another mirror.
+#
 # The timeout kills the command's whole process group, so run this script as
 # the same user as the command: `sudo retry.sh -- apt-get ...`, not
 # `retry.sh -- sudo apt-get ...`, or a root child survives the kill and keeps
@@ -68,7 +71,7 @@ code=0
 for ((n = 1; n <= attempts; n++)); do
     echo "retry: attempt $n/$attempts (timeout ${per_attempt}s): $cmd_text" >&2
     start=$SECONDS
-    "$timeout_cmd" --kill-after=10 "$per_attempt" "$@"
+    RETRY_ATTEMPT=$n "$timeout_cmd" --kill-after=10 "$per_attempt" "$@"
     code=$?
     took=$((SECONDS - start))
     if [[ $code -eq 0 ]]; then

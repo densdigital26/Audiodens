@@ -117,11 +117,21 @@ check "hang: killed, exit 124" "$([[ $CODE -eq 124 ]] && echo 1 || echo 0)" "got
 check "hang: both attempts bounded (took ${TOOK}s)" "$([[ $TOOK -lt 15 ]] && echo 1 || echo 0)"
 check "hang: timeout logged" "$([[ "$OUT" == *"attempt 1/2 timed out"* ]] && echo 1 || echo 0)"
 sleep 1
+# A killed process whose parent died first is reparented to PID 1. In a
+# container that PID 1 may never reap it, so it stays a zombie: dead, but
+# kill -0 still finds it. Read the state from /proc where there is one.
+alive() {
+    if [[ -r "/proc/$1/stat" ]]; then
+        [[ "$(awk '{print $3}' "/proc/$1/stat" 2>/dev/null)" != "Z" ]]
+    else
+        kill -0 "$1" 2>/dev/null
+    fi
+}
 SEEN=0
 ALIVE=0
 while read -r pid; do
     SEEN=$((SEEN + 1))
-    kill -0 "$pid" 2>/dev/null && ALIVE=$((ALIVE + 1))
+    alive "$pid" && ALIVE=$((ALIVE + 1))
 done < <(cat "$HANG.pids" 2>/dev/null)
 check "hang: both attempts started the command and its child" \
   "$([[ $SEEN -eq 4 ]] && echo 1 || echo 0)" "saw $SEEN pids"
@@ -148,6 +158,11 @@ check "pause: none after the last attempt" \
 
 OUT="$(run_retry --delay 0 -- printf '%s|' "a b" "c")"
 check "args: spaces kept" "$([[ "$OUT" == *"a b|c|"* ]] && echo 1 || echo 0)" "got $OUT"
+
+# Each attempt is told which one it is.
+OUT="$(run_retry --delay 0 -- bash -c 'echo "n=$RETRY_ATTEMPT"; [ "$RETRY_ATTEMPT" -ge 2 ]')"; CODE=$?
+check "RETRY_ATTEMPT: 1 then 2" \
+  "$([[ $CODE -eq 0 && "$OUT" == *"n=1"*"n=2"* && "$OUT" != *"n=3"* ]] && echo 1 || echo 0)" "got $OUT"
 
 run_retry --attempts 0 -- true >/dev/null; CODE=$?
 check "usage: --attempts 0 rejected with exit 2" "$([[ $CODE -eq 2 ]] && echo 1 || echo 0)" "got $CODE"

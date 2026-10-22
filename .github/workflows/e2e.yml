@@ -163,6 +163,12 @@ jobs:
       # under sudo so its timeout can kill apt itself, and apt resumes partial
       # downloads, so a retry does not start from zero. 3 attempts of at most
       # 170 s plus 30 s of pauses fit inside the step's 10 minutes.
+      # The image's apt sources go through /etc/apt/apt-mirrors.txt: Azure's
+      # mirror first, then archive.ubuntu.com, then security.ubuntu.com. apt
+      # only falls back on an error, never on a trickle, and #838's own CI saw
+      # Azure serve the font packages at about 40 kB/s for nine minutes while
+      # it served the package index at 1.5 MB/s. So a retry drops Azure and
+      # starts on archive.ubuntu.com.
       - name: Playwright system dependencies
         timeout-minutes: 10
         env:
@@ -179,7 +185,13 @@ jobs:
           debs="$HOME/.cache/e2e-apt-debs"
           mkdir -p "$debs"
           find "$debs" -maxdepth 1 -name '*.deb' -exec sudo cp -t /var/cache/apt/archives/ {} +
-          sudo env "PATH=$PATH" "GITHUB_ACTIONS=${GITHUB_ACTIONS:-}" bash scripts/ci/retry.sh --timeout 170 -- node_modules/.bin/playwright install-deps chromium
+          cat /etc/apt/apt-mirrors.txt 2>/dev/null || true
+          sudo env "PATH=$PATH" "GITHUB_ACTIONS=${GITHUB_ACTIONS:-}" bash scripts/ci/retry.sh --timeout 170 -- bash -c '
+            if [ "$RETRY_ATTEMPT" -gt 1 ] && grep -q "azure\.archive\.ubuntu\.com" /etc/apt/apt-mirrors.txt 2>/dev/null; then
+              echo "retry: attempt $RETRY_ATTEMPT drops the Azure Ubuntu mirror"
+              sed -i "/azure\.archive\.ubuntu\.com/d" /etc/apt/apt-mirrors.txt
+            fi
+            exec node_modules/.bin/playwright install-deps chromium'
           find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -t "$debs" {} +
           echo "cached .debs: $(find "$debs" -name '*.deb' | wc -l), $(du -sh "$debs" | cut -f1)"
           bash scripts/ci/setup-timing.sh end "Playwright system deps" "$CACHE"
