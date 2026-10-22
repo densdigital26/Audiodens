@@ -63,64 +63,25 @@ jobs:
       - run: for f in static/js/*.js; do node --check "$f"; done
       - run: for f in tests/js/*.test.mjs; do node "$f"; done
 
-  # Browser tests for static/js (#339). node --check above is a syntax parse;
-  # this drives the real UI against the real backend, including the Tauri code
-  # path, which is where #335 hid because it was invisible in a browser.
-  # Split three ways, each shard on its own runner (#686). The suite runs
-  # serially inside a shard -- workers: 1 in playwright.config -- because it
-  # shares one backend and one jobs directory, and several specs change server
-  # state. A shard is a separate machine with its own backend, so splitting
-  # here adds parallelism without adding sharing. Files stay whole, since
-  # fullyParallel is off, so tests that rely on order within a file still get
-  # it. Free on a public repository; each shard pays its own setup.
+  # Browser tests for static/js: the steps live in e2e.yml, shared with
+  # e2e-full.yml. A pull request to main, a push to main and a release run the
+  # whole suite. A pull request to any other base runs the scoped set (changed
+  # specs, smoke, mapped specs, and the core set for a hub change); the full
+  # run on the next push to big-release catches what that set misses.
+  # Checks show as "frontend-e2e / frontend-e2e (1)" to "(3)".
   frontend-e2e:
-    runs-on: ubuntu-latest
-    strategy:
-      # One failing shard must not cancel the others: the report is only
-      # useful whole.
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          # Full history, so the base branch is there to diff against.
-          fetch-depth: 0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
-        with:
-          node-version: "20"
-          cache: npm
-      # A pull request to main and every push run the whole suite. A pull
-      # request to any other branch runs the specs it changes, a smoke set and
-      # the specs tests/e2e/spec-map.json maps to its changed files, or the
-      # whole suite when a change is shared or unmapped. Empty output means
-      # everything. The refs go through env, never into the script text.
-      - name: select specs
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE_REF: ${{ github.base_ref }}
-        run: node scripts/ci/select-e2e.mjs --event "$EVENT" --base "$BASE_REF" > "$RUNNER_TEMP/e2e-specs.txt"
-      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
-      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - run: uv sync --frozen --all-extras
-      - run: npm ci
-      - run: npx playwright install --with-deps chromium
-      # The backend under test is real, and finishing a recorded take renders
-      # it with ffmpeg (app/pipeline/take_render.py). The runner image has no
-      # ffmpeg, so without this the take specs get a 500 and time out.
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
-      # A reduced set can leave a shard with nothing to run, which must pass.
-      # The spec list is unquoted on purpose: one argument per path.
-      - run: npx playwright test --shard=${{ matrix.shard }}/3 --pass-with-no-tests $(cat "$RUNNER_TEMP/e2e-specs.txt")
-      - if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
-        with:
-          # Per shard: a second upload under the same name fails the job.
-          name: playwright-report-${{ matrix.shard }}
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 7
+    # A new push to a pull request cancels that pull request's older e2e run.
+    # Anything else gets a group of its own (the run id), so a push to main or
+    # a release is never cancelled and never waits behind another run. This
+    # does not help a runner GitHub never assigns: re-run that job, or
+    # gh run cancel <id> then gh run rerun <id> --failed.
+    concurrency:
+      group: e2e-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/e2e.yml
+    with:
+      mode: ${{ (github.event_name == 'pull_request' && github.base_ref != 'main') && 'scoped' || 'full' }}
+      base-ref: ${{ github.base_ref }}
 
   # The Linux installer only ever runs on a user's machine, so nothing else
   # would catch a regression in it. Runs on a real Linux image rather than the
