@@ -1263,6 +1263,9 @@ input, textarea { font-family: inherit; }
    one line at any width, a long one takes two. */
 .daw-meta-card[data-meta="key"] .meta-card-main { align-items: center; }
 .daw-meta-card[data-meta="key"] .meta-card-value {
+  /* Shrinks, unlike the other values: it wraps instead of clipping, and the
+     confidence ring beside it has to keep its place on the line. */
+  flex-shrink: 1;
   white-space: normal;
   overflow-wrap: break-word;
   line-height: 1.15;
@@ -1329,6 +1332,14 @@ input, textarea { font-family: inherit; }
   line-height: 1;
   font-family: var(--font-mono);
   min-width: 0;
+  /* The qualifier beside it gives up all of its width before the number
+     loses a character. flex-shrink alone does not do that: it is weighted by
+     each item's size, so at 1280 "-25.2" still lost its last digit to
+     "Peak -21.4 dB" beside it. The max-width keeps a value wider than the
+     whole card from painting over the next one; that is the case the
+     ellipsis below is still for. */
+  flex-shrink: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2806,10 +2817,10 @@ input, textarea { font-family: inherit; }
 }
 .track-panel-head .daw-fav-btn:hover { background: var(--panel-3); }
 /* Hairline cluster separator: fades out at both ends so it reads as a seam
-   between groups rather than a hard rule across the footer. Every one of these
-   separates something now that .footer-row-controls never wraps -- the
-   is-orphan state that used to hide a divider stranded at the end of a wrapped
-   line went with the wrapping. */
+   between groups rather than a hard rule across the footer. On one line every
+   one of these separates something; when the clusters do wrap
+   (.collapse-rows), all of them are hidden rather than working out which one
+   was stranded at the end of a line. */
 .footer-divider {
   width: 1px; flex: none;
   background: linear-gradient(
@@ -2825,8 +2836,10 @@ input, textarea { font-family: inherit; }
    One line, always. Wrapping rearranged the band into a different shape at
    every window width -- clusters piling onto a second row, the click track
    splitting its own options in half -- so the footer never looked like itself
-   twice. Nothing here shrinks either (.footer-group is flex: none), so when
-   the window is too narrow the row scrolls sideways rather than reflowing. */
+   twice. Nothing here shrinks either (.footer-group is flex: none). One line
+   until footerFit.js has run out of every narrower one-line shape; only then
+   do whole clusters wrap to a second line (.collapse-rows below), because
+   the alternative was a row scrolling sideways with controls out of sight. */
 .footer-row-controls {
   display: flex; align-items: flex-start; flex-wrap: nowrap;
   gap: 16px;
@@ -3422,6 +3435,33 @@ input, textarea { font-family: inherit; }
    widest cluster on the row got 2px roomier at the exact moment this is trying
    to reclaim width. Eight gaps at 8px instead of 16px is the win here. */
 .footer-clusters.collapse-tight { gap: 8px; }
+
+/* After the spacing, the only width left to find is a second line. Whole
+   clusters wrap, never the controls inside one (.footer-group stays flex:
+   none), so each cluster keeps its own shape and its label above it. Without
+   this the tight row scrolled sideways with no scrollbar showing, cutting
+   Global key mid-label and hiding the click track at the desktop app's default
+   1280x820 window. The footer has no height of its own, so the lanes give up
+   one control row for it.
+
+   Packed left rather than spread: space-between on a wrapped row stretches a
+   lone cluster on the second line across to Export Mix. The dividers go too, a
+   divider at the end of a line separates nothing, and the gap still parts the
+   clusters. Later in the file than .collapse-click, at the same specificity,
+   so it wins. */
+.footer-clusters.collapse-rows {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  row-gap: 10px;
+  column-gap: 20px;
+}
+.footer-clusters.collapse-rows .footer-divider { display: none; }
+/* Set by footerFit.js only when it makes the controls row shorter: the strip
+   takes the whole width and Master and Export Mix move to a line of their own
+   under it, right-aligned where they were. */
+.footer-row-controls.collapse-stack { flex-wrap: wrap; row-gap: 10px; }
+.footer-row-controls.collapse-stack .footer-clusters { flex-basis: 100%; }
+.footer-row-controls.collapse-stack .footer-track-actions { margin-top: 0; margin-left: auto; }
 
 /* Click volume: a pill like everything else on the row, opening a vertical
    fader. It was a 116px slider with a percentage after it -- the only control

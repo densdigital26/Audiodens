@@ -84,7 +84,7 @@
       "paths": ["static/css/daw.css"],
       "specs": [
         "about-reach", "artist-from-tags", "brand-link", "click-track", "drag-out", "eq-panels", "eq-suggest", "error-banner",
-        "error-box-narrow", "file-drop", "footer-fit", "footer-time", "format-icon", "help-mode", "karaoke", "key-card",
+        "error-box-narrow", "file-drop", "footer-fit", "footer-no-clip", "footer-time", "format-icon", "help-mode", "karaoke", "key-card",
         "lane-alignment", "live-wave", "lyrics", "lyrics-cjk", "lyrics-sync", "network-transpose-warning", "panel-toggles",
         "partial-stems", "recording-real-audio", "recording-tracks", "report-failure", "search", "sections-lock",
         "sections-loop", "sections-zoom", "settings-scroll", "stem-chip-overflow", "streamer", "take-folders",
@@ -170,7 +170,7 @@
     {
       "why": "Footer and transport layout",
       "paths": ["static/js/footerFit.js", "static/css/transport.css"],
-      "specs": ["footer-fit", "footer-time", "click-track", "export-menu", "slow-speed"]
+      "specs": ["footer-fit", "footer-no-clip", "footer-time", "click-track", "export-menu", "slow-speed"]
     },
     {
       "why": "Recording: capture, takes, take folders, track inputs, meters",
