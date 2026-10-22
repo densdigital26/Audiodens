@@ -277,9 +277,10 @@ def test_the_committed_drift_fixture_matches_what_python_measures():
 # ── The API ──
 
 JOB = "c1c2c3c4c5c6"
-# A mono click summed with stereo stems in the mix graph lands at -3 dB per
-# channel (libswresample's mono-to-stereo matrix); the zip's click matches it.
-UPMIX = 1 / np.sqrt(2)
+# The mono click goes to both channels of an export at unity, as the app plays
+# it, so a channel of the zip's click or of the mix is the voice times the
+# click volume (#833: it was 1 / sqrt(2) lower, -3 dB, while amix did the
+# conversion).
 STEM_SECONDS = 3.3  # deliberately not the grid's 3.0: the stems decide the length
 GRID = {
     "version": 1,
@@ -396,14 +397,14 @@ async def test_the_zip_click_is_sample_aligned_with_the_stems(client, jobs_dir, 
     thr = 0.02
     expected = []
     for i, t in enumerate(GRID["beats"]):
-        voice = cs.render_voice(sound, beat_level(i, GRID["bars"], -1), SR) * gain * UPMIX
+        voice = cs.render_voice(sound, beat_level(i, GRID["bars"], -1), SR) * gain
         expected.append(int(round(t * SR)) + int(np.flatnonzero(np.abs(voice) > thr)[0]))
     got = _onsets(click[:, 0], thr)
     assert len(got) == len(expected)
     assert max(abs(g - e) for g, e in zip(got, expected, strict=True)) <= 1, (got, expected)
     # The level is what the click contributes to the mix.
     peak = np.max(np.abs(click[: int(0.9 * SR), 0]))
-    want = np.max(np.abs(cs.render_voice(sound, LEVEL_DOWNBEAT, SR))) * gain * UPMIX
+    want = np.max(np.abs(cs.render_voice(sound, LEVEL_DOWNBEAT, SR))) * gain
     assert peak == pytest.approx(want, abs=3 / 32767)
 
 
@@ -526,7 +527,7 @@ async def test_the_mix_export_uses_the_chosen_sound(client, jobs_dir):
             out[sound] = _wav(r.content)[:, 0]
     assert not np.array_equal(out["classic"], out["cowbell"])
     # The cowbell export's first click is the cowbell downbeat voice.
-    voice = cs.render_voice("cowbell", LEVEL_DOWNBEAT, SR) * 0.5 * UPMIX
+    voice = cs.render_voice("cowbell", LEVEL_DOWNBEAT, SR) * 0.5
     start = int(round(GRID["beats"][0] * SR))
     seg = out["cowbell"][start : start + len(voice)]
     assert np.max(np.abs(seg - voice)) < 4 / 32767
@@ -565,3 +566,112 @@ async def test_the_zip_sums_to_the_mix_export(client, jobs_dir):
     )
     assert total.shape == mix.shape
     assert np.max(np.abs(total - mix)) < 4 / 32767
+
+
+# ── The exported click's level is the live click's (#833) ──
+#
+# Live, the click is a mono AudioBuffer through a GainNode at the click volume
+# into the stereo master, and Web Audio's mono-to-stereo up-mix copies it to
+# both channels at full level. So the level the app plays on each channel is
+# the synthesised buffer times the volume, and every export must match it.
+
+
+def _live_click(level: int, gain: float) -> np.ndarray:
+    """The live Classic click on one channel: the browser's buffer times the volume."""
+    return cs.render_voice("classic", level, SR) * gain
+
+
+def _db(a: np.ndarray, b: np.ndarray) -> float:
+    return float(20 * np.log10(np.sqrt(np.mean(a**2)) / np.sqrt(np.mean(b**2))))
+
+
+# (query, the first click's start sample in the export, its level).
+_LEVEL_CASES = {
+    "mix": ("", int(round(GRID["beats"][0] * SR)), beat_level(0, GRID["bars"], -1)),
+    # The region starts on the second beat, so its first click is at sample 0.
+    "region": ("&start=1.0&end=3.0", 0, beat_level(1, GRID["bars"], -1)),
+    # The count-in's first click is its downbeat, at sample 0.
+    "count_in": ("&count_in=1", 0, LEVEL_DOWNBEAT),
+}
+
+
+@pytest.mark.parametrize("ext", ["wav", "flac"])
+@pytest.mark.parametrize("case", sorted(_LEVEL_CASES))
+async def test_the_exported_click_is_at_the_live_level_on_each_channel(client, jobs_dir, case, ext):
+    """The same click at the same volume: each channel of the export carries
+    the live click's level, within 0.05 dB (the 16-bit render's rounding). It
+    was 3.01 dB lower while the mix graph left the mono-to-stereo conversion
+    to amix."""
+    skip_without_ffmpeg()
+    _make_job(jobs_dir)
+    gain = 0.6
+    query, at, level = _LEVEL_CASES[case]
+    async with client as c:
+        r = await c.get(
+            f"/api/jobs/{JOB}/mixdown.{ext}?stems=drums&gains=0&click=1&click_gain={gain}{query}"
+        )
+    assert r.status_code == 200, r.text
+    out, _ = sf.read(io.BytesIO(r.content))
+    live = _live_click(level, gain)
+    assert out.ndim == 2 and out.shape[1] == 2
+    for ch in (0, 1):
+        diff = _db(out[at : at + len(live), ch], live)
+        assert diff == pytest.approx(0.0, abs=0.05), (case, ch, diff)
+
+
+async def test_the_zip_click_is_at_the_live_level_on_each_channel(client, jobs_dir):
+    skip_without_ffmpeg()
+    _make_job(jobs_dir)
+    gain = 0.6
+    async with client as c:
+        r = await c.get(f"/api/jobs/{JOB}/stems/all.zip?click=1&click_gain={gain}")
+    click, _ = sf.read(io.BytesIO(_zip(r.content).read("Clicky_click.wav")))
+    live = _live_click(beat_level(0, GRID["bars"], -1), gain)
+    at = int(round(GRID["beats"][0] * SR))
+    for ch in (0, 1):
+        diff = _db(click[at : at + len(live), ch], live)
+        assert diff == pytest.approx(0.0, abs=0.05), (ch, diff)
+
+
+async def test_the_video_export_click_is_at_the_live_level_on_each_channel(
+    client, jobs_dir, tmp_path
+):
+    """The MP4 export: AAC, so compared by the RMS of the whole click track
+    (timing-blind, the encoder's priming does not matter), within 0.2 dB."""
+    skip_without_ffmpeg()
+    from tests.test_export_limiter import _tiny_video
+
+    _make_job(jobs_dir)
+    _tiny_video(jobs_dir / JOB / "video.mp4", STEM_SECONDS)
+    gain = 0.6
+    async with client as c:
+        r = await c.get(f"/api/jobs/{JOB}/video.mp4?stems=drums&gains=0&click=1&click_gain={gain}")
+    assert r.status_code == 200, r.text
+    out = tmp_path / "out.mp4"
+    out.write_bytes(r.content)
+    pcm = subprocess.run(
+        [
+            ffmpeg_executable(),
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-i",
+            str(out),
+            "-vn",
+            "-f",
+            "f32le",
+            "pipe:1",
+        ],
+        capture_output=True,
+        check=True,
+        timeout=60,
+    ).stdout
+    x = np.frombuffer(pcm, dtype="<f4").reshape(-1, 2)
+    # The live click track: the same mono render, times the volume.
+    mono = render_click_wav(
+        tmp_path / "live.wav", GRID["beats"], GRID["bars"], GRID["duration"], sample_rate=SR
+    )
+    live, _ = sf.read(mono)
+    for ch in (0, 1):
+        diff = _db(x[:, ch], live * gain) + 10 * np.log10(len(x) / len(live))
+        assert diff == pytest.approx(0.0, abs=0.2), (ch, diff)

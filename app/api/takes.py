@@ -102,6 +102,7 @@ from app.core.takes import (
     write_tracks,
 )
 from app.pipeline import video_encoder
+from app.pipeline.click_render import CLICK_TO_STEREO
 from app.pipeline.click_sounds import DEFAULT_CLICK_SOUND
 from app.pipeline.collect import merge_stem_peaks
 from app.pipeline.runner import _pipeline_lock
@@ -1726,7 +1727,8 @@ async def _prepare_render(
             # No beat grid: the render goes ahead without it, as the export does.
             logger.info("[%s] take %s render: no click (no beat grid)", job_id, take_id)
         else:
-            lanes = [*lanes, AudioLane(click.path, click.gain, "")]
+            # The mono click to stereo at unity, as the export and the app (#833).
+            lanes = [*lanes, AudioLane(click.path, click.gain, "", f"{CLICK_TO_STEREO},")]
     # The master, measured on the whole song with the take as one more lane
     # (audio.wav is aligned to song 0), replaces the lossy export limiter.
     master_settings = stems_api.parse_master_query(body.master)

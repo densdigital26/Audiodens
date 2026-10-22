@@ -40,8 +40,13 @@ from app.core.stem_files import stem_ext, stem_media_type, stem_path
 from app.core.takes import take_dir
 from app.pipeline.audio_encoders import unavailable_detail
 from app.pipeline.audio_stats import vocal_envelope
+from app.pipeline.click_render import (
+    CLICK_TO_STEREO,
+    count_in_beats,
+    render_click_wav,
+    render_count_in_wav,
+)
 from app.pipeline.click_render import cache_key as click_cache_key
-from app.pipeline.click_render import count_in_beats, render_click_wav, render_count_in_wav
 from app.pipeline.click_sounds import CLICK_SOUND_IDS, DEFAULT_CLICK_SOUND
 from app.pipeline.collect import fill_missing_peaks
 from app.pipeline.fx_filters import (
@@ -251,8 +256,10 @@ def _mixdown_cache_key(
         "" if end is None else f"{end:.6f}",
         str(get_export_sample_rate()),
         # The click's own cache key already encodes the grid, rate and
-        # accent mode, so its filename plus gain fully identifies it.
-        "" if click_lane is None else f"{click_lane[0].name}:{click_lane[1]:.6f}",
+        # accent mode, so its filename plus gain fully identifies it. ":u":
+        # the click now goes to stereo at unity (#833), so a mix with a click
+        # cached at the old -3 dB misses; a mix without one keeps its key.
+        "" if click_lane is None else f"{click_lane[0].name}:{click_lane[1]:.6f}:u",
         # Appended only when something is actually transposed, so every
         # export made before #592 keeps the exact key it already had and
         # the cache survives the change.
@@ -1944,7 +1951,10 @@ async def get_mixdown(
         eq = render_fx.lanes[i]
         filters.append(f"[{i}:a]{eq}{_pitch_filter(lane.pitch)}{delay}volume={lane.gain:.6f}[a{i}]")
     if click_lane is not None:
-        filters.append(f"[{stem_count}:a]volume={click_lane.gain:.6f}[a{stem_count}]")
+        # The mono click to stereo at unity, as the app plays it (#833).
+        filters.append(
+            f"[{stem_count}:a]volume={click_lane.gain:.6f},{CLICK_TO_STEREO}[a{stem_count}]"
+        )
     n = stem_count + (1 if click_lane is not None else 0)
     # Master EQ on the sum (click included, as live: the click joins upstream
     # of the master slot), then the limiter last.
@@ -2199,9 +2209,12 @@ async def get_video_mixdown(
     video_idx = len(paths)
     # Per-lane gain then amix (normalize=0 keeps levels faithful). A single audible
     # lane skips amix (a 1-input amix is a no-op), matching get_mixdown.
-    # EQ first in each lane, as in get_mixdown; the click lane has none.
+    # EQ first in each lane, as in get_mixdown; the click lane has none, and
+    # goes to stereo at unity as in get_mixdown (#833).
+    click_idx = len(render_lanes) - 1 if click_lane is not None else -1
     filters = [
-        f"[{i}:a]{render_fx.lanes[i]}{_pitch_filter(lane.pitch)}volume={lane.gain:.6f}[a{i}]"
+        f"[{i}:a]{render_fx.lanes[i]}{_pitch_filter(lane.pitch)}volume={lane.gain:.6f}"
+        f"{',' + CLICK_TO_STEREO if i == click_idx else ''}[a{i}]"
         for i, lane in enumerate(render_lanes)
     ]
     n = len(paths)
@@ -2335,7 +2348,8 @@ def _render_click_stem(click: _ClickStem, reference: Path, fmt: str, workdir: Pa
 
     Gain: what the click contributes to a mix export, so the zip's files sum
     to that mix at unity stem gains: the click's export level (`click_gain`),
-    and the mix graph's mono-to-stereo conversion (-3 dB per channel).
+    and the mono click on both channels at unity (CLICK_TO_STEREO), as the
+    mix graph does and as the app plays it (#833).
 
     The end of the chain is the export limiter for the format, as for every
     exported mix: bit-transparent below its -1 dBFS ceiling for WAV and FLAC
@@ -2366,10 +2380,9 @@ def _render_click_stem(click: _ClickStem, reference: Path, fmt: str, workdir: Pa
     if raw is None:
         return None
     # To the stems' layout by the same conversion the mix export's graph
-    # inserts when it sums this mono click with stereo stems (libswresample's
-    # default mono-to-stereo matrix, -3 dB per channel), so the click in the
-    # zip is exactly the click in the mix.
-    upmix = f"aformat=channel_layouts={'stereo' if channels == 2 else 'mono'},"
+    # applies to the click (the mono click on both channels at unity, #833),
+    # so the click in the zip is exactly the click in the mix.
+    upmix = f"{CLICK_TO_STEREO}," if channels == 2 else ""
     chain = (
         f"volume={max(0.0, min(4.0, click.gain)):.6f},{upmix}"
         f"{export_limiter(lossy=fmt in _LOSSY_MIXDOWN_EXTS)},aresample={rate},"
