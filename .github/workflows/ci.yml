@@ -42,6 +42,9 @@ jobs:
       - run: uv run ruff check app/ tests/
       - run: uv run ruff format --check app/ tests/
       - run: bash -n run.sh
+      # The retry wrapper the e2e installs depend on (#838). Here because this
+      # job runs on every pull request, whatever it changes.
+      - run: bash tests/ci/test_retry_sh.sh
 
   test:
     runs-on: ubuntu-latest
