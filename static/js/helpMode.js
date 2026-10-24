@@ -93,6 +93,7 @@ const HELP = [
   ["#catalogList .cat-item.in-trash", "help.trashedSong"],
   ["#catalogList .cat-item", "help.song"],
   // A version of a song, under its row (#804).
+  ["#catalogList .cat-version .cat-version-del", "help.versionRowDelete"],
   ["#catalogList .cat-version", "help.versionRow"],
   // The Lyrics view of the sidebar (lyrics.js). Align and Sync lines come
   // before the plain links, which share their class.

@@ -109,6 +109,32 @@ test.describe("versions of a song", () => {
     await expect(pop.locator(".stems-pop-vdelete")).toBeDisabled();
   });
 
+  test("delete a version from its row in the library", async ({ page, request }) => {
+    await request.post(`/api/jobs/${JOB_ID}/versions`, { data: { name: "Guitar study", stems: ["drums", "vocals"], select: false } });
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await openStudio(page);
+    await expect(rows(page)).toHaveCount(2);
+
+    // The first press only arms the button and says so; nothing is deleted.
+    const del = rows(page).nth(1).locator(".cat-version-del");
+    await rows(page).nth(1).hover();
+    await del.click();
+    await expect(del).toHaveClass(/armed/);
+    await expect(del).toContainText("Press again");
+    expect((await (await request.get(`/api/jobs/${JOB_ID}/versions`)).json()).versions).toHaveLength(2);
+    // The press did not open the version either.
+    await expect(rows(page).nth(0)).toHaveClass(/active/);
+
+    // The second press deletes it: the rows go with the second version, the
+    // song and its stems stay.
+    await del.click();
+    await expect(rows(page)).toHaveCount(0);
+    const listed = await (await request.get(`/api/jobs/${JOB_ID}/versions`)).json();
+    expect(listed.versions.map((v) => v.id)).toEqual(["main"]);
+    expect((await request.get(`/api/jobs/${JOB_ID}/stems/drums.wav`)).status()).toBe(200);
+    await expect.poll(() => lanes(page), { timeout: 15000 }).toBe("bass,drums,other,vocals");
+  });
+
   test("Extract with other chips on the open song makes a version and separates nothing", async ({ page, request }) => {
     let filled = 0;
     await page.route("**/api/jobs/*/fill-stems", (route) => { filled += 1; return route.continue(); });
@@ -145,6 +171,8 @@ test.describe("versions of a song", () => {
     const tip = page.locator("#helpTip");
     await rows(page).nth(1).hover();
     await expect(tip).toContainText("One version of this song");
+    await rows(page).nth(1).locator(".cat-version-del").hover();
+    await expect(tip).toContainText("Delete this version");
     // In the Guide a click explains instead of opening the version.
     await rows(page).nth(1).click();
     await expect(rows(page).nth(0)).toHaveClass(/active/);

@@ -829,6 +829,34 @@ input, textarea { font-family: inherit; }
   text-overflow: ellipsis;
 }
 .cat-version.active .cat-version-name { color: var(--fg); }
+/* Delete a version: shown on hover, focus and for the open one, so the rows
+   stay quiet. Armed, it turns into its own confirmation text. */
+.cat-version-del {
+  flex-shrink: 0;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10.5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--t-fast), color var(--t-fast), background var(--t-fast);
+}
+.cat-version-del svg { width: 13px; height: 13px; }
+.cat-version:hover .cat-version-del,
+.cat-version.active .cat-version-del,
+.cat-version-del:focus-visible,
+.cat-version-del.armed { opacity: 1; }
+.cat-version-del:hover { color: var(--danger); background: var(--panel-3); }
+.cat-version-del:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.cat-version-del.armed { color: var(--danger); }
 .cat-version-stems {
   flex: 1;
   min-width: 0;

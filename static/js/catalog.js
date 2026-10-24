@@ -1,7 +1,7 @@
 // catalog.js — library panel: folders, tracks, collapse, drag-and-drop
 import { wireUpAudio, updateFooterTrack } from "./player.js";
 import { prepareLayout } from "./modeStems.js";
-import { applyServerVersions, openVersion, versionLabel, versionStemsText } from "./versions.js";
+import { applyServerVersions, deleteVersion, openVersion, versionLabel, versionStemsText } from "./versions.js";
 import { activeVersionId, songVersions } from "./versionScope.js";
 import { initSections } from "./sections.js";
 import { audioEngine, bpmChip, foregroundJobId, keyChip, multitrack, selectedStems, titleEl } from "./state.js";
@@ -2118,7 +2118,36 @@ function renderVersionRows(trackId) {
     const stems = versionStemsText(v.stems);
     el.title = i18nT("versions.openVersion", { name, stems });
     el.setAttribute("aria-label", el.title);
-    el.innerHTML = `<span class="cat-version-name">${esc(name)}</span><span class="cat-version-stems">${esc(stems)}</span>`;
+    el.innerHTML = `<span class="cat-version-name">${esc(name)}</span><span class="cat-version-stems">${esc(stems)}</span><button class="cat-version-del" type="button" title="${esc(i18nT("versions.delete"))}" aria-label="${esc(i18nT("versions.delete"))}: ${esc(name)}">${TRASH_ICON_SVG}</button>`;
+    // Two presses, like the Stems popover: the first arms it and says so, the
+    // second deletes. The song's stems and the other versions stay.
+    const del = el.querySelector(".cat-version-del");
+    let armTimer = null;
+    const disarm = () => {
+      clearTimeout(armTimer);
+      del.classList.remove("armed");
+      del.innerHTML = TRASH_ICON_SVG;
+    };
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!del.classList.contains("armed")) {
+        del.classList.add("armed");
+        del.textContent = i18nT("versions.deleteConfirm");
+        armTimer = setTimeout(disarm, 4000);
+        return;
+      }
+      clearTimeout(armTimer);
+      del.disabled = true;
+      deleteVersion(trackId, v.id).then((err) => {
+        if (err) {
+          del.disabled = false;
+          disarm();
+          showError(err);
+        }
+      });
+    });
+    del.addEventListener("blur", disarm);
+    del.addEventListener("keydown", (e) => e.stopPropagation());
     const go = (e) => {
       e.stopPropagation();
       openVersion(trackId, v.id).catch((err) => {
